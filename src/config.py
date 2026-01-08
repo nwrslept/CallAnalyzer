@@ -1,16 +1,49 @@
 import os
 from dotenv import load_dotenv
 
+# Завантаження змінних з файлу .env
 load_dotenv()
 
-
 class Config:
-    GOOGLE_CREDENTIALS_FILE = "service_account.json"
+    """
+    Конфігураційний клас проекту.
+    Зберігає всі статичні налаштування, ключі доступу та ідентифікатори ресурсів.
+    """
+
+    # --- НАЛАШТУВАННЯ ДОСТУПУ (CREDENTIALS) ---
+    GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+    # --- ІДЕНТИФІКАТОРИ GOOGLE DRIVE ТА SHEETS ---
+    SOURCE_FOLDER_ID = os.getenv("SOURCE_FOLDER_ID")
+    WORK_FOLDER_ID = os.getenv("WORK_FOLDER_ID")
+    SHEET_ID = os.getenv("SHEET_ID")
 
-    SOURCE_FOLDER_ID = "1dpKG-eaFg2glOovkI4sYgLyPo3mW9Ilg"
+    # --- ЛОКАЛЬНІ НАЛАШТУВАННЯ ---
+    TEMP_FOLDER = "temp_audio"
 
-    WORK_FOLDER_ID = "16-wguVrApMKUKqSpTGQP7b7NgWA7b0vU"
-
-    SHEET_ID = "16I6nqmaD-AjkKF7sQWWQPRn0xnVdS9HBbwBFTe-_y0U"
+    # --- БІЗНЕС-ЛОГІКА (СПИСОК ПОСЛУГ) ---
+    SERVICES_LIST = [
+        "Комп'ютерна діагностика",
+        "Заміна оливи ДВЗ + масляний фільтр",
+        "Комплексна діагностика",
+        "Ендоскопія",
+        "Заміна повітряного фільтра ДВЗ",
+        "Заміна фільтра салону в салонному відділенні",
+        "Заміна сайлентблоку",
+        "Зняття / встановлення важеля",
+        "Заміна еластичної муфти карданного валу",
+        "Слюсарні роботи",
+        "Діагностика підвіски (НЕ ВИКОРИСТОВУЄМ)ВИКОРИСТОВУЄМ КОМПЛЕКСНУ",
+        "Зняття / встановлення важеля прд.",
+        "Заміна амортизатора переднього",
+        "Заміна оливи АКПП",
+        "Мийка / чистка деталі",
+        "Зняття / встановлення повітряного патрубка",
+        "Заміна охолоджувальної рідини",
+        "Заміна гальмівної рідини з прокачкою",
+        "Заміна оливи в зд. редукторі",
+        "Кодування опцій",
+        "Заміна амортизатора зд.",
+        "Заміна гальмівних дисків та колодок прд.",
+    ]

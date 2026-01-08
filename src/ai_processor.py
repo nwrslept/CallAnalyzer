@@ -1,90 +1,128 @@
 import os
 import json
-import google.generativeai as genai
+import time
+from google import genai
+from google.genai import types
 from src.config import Config
 
 
 class AIProcessor:
     """
-    Handles interaction with Google Gemini API.
-    Responsible for:
-    - Audio transcription
-    - Sentiment analysis
-    - Scoring logic based on the provided criteria
+    Клас для взаємодії з Google Gemini API через новий SDK 'google-genai'.
+    Відповідає за завантаження аудіо, генерацію промптів та парсинг відповідей.
     """
 
     def __init__(self):
+        # Перевірка наявності ключа API у конфігурації
         if not Config.GEMINI_API_KEY:
-            raise ValueError("Gemini API Key is missing in Config!")
+            raise ValueError("Відсутній API ключ Gemini у конфігурації!")
 
-        genai.configure(api_key=Config.GEMINI_API_KEY)
-        self.model = genai.GenerativeModel("gemini-1.5-flash")
+        self.client = genai.Client(api_key=Config.GEMINI_API_KEY)
+        self.model_name = "gemini-2.0-flash"
+
+    def _clean_json_string(self, text_response: str) -> str:
+        """
+        Очищує рядок відповіді від маркерів форматування Markdown (```json ... ```),
+        щоб підготувати його для парсингу через json.loads.
+        """
+        if text_response.startswith("```json"):
+            text_response = text_response[7:-3]
+        elif text_response.startswith("```"):
+            text_response = text_response[3:-3]
+
+        return text_response.strip()
 
     def analyze_call(self, audio_path: str) -> dict:
         """
-        Uploads audio to Gemini and requests a structured JSON analysis.
-
-        Returns a dictionary with:
-        - transcription (str)
-        - service_type (str)
-        - manager_score (int 1-10)
-        - is_rude_or_incorrect (bool)
-        - comments (str) - formatted for the 'red' alert if needed
-        - points_greeting (0/1)
-        - points_closing (0/1)
+        Основний метод аналізу дзвінка.
+        Завантажує файл, відправляє запит до AI та повертає структуровані дані.
         """
-
-        print(f"DEBUG: Uploading {audio_path} to Gemini for analysis...")
-
-        audio_file = genai.upload_file(path=audio_path)
-
-        services_str = ", ".join(Config.SERVICES_LIST)
-
-        prompt = f"""
-        You are a QA (Quality Assurance) specialist analyzing a client call in Ukrainian.
-
-        Task 1: Transcribe the audio (Ukrainian).
-        Task 2: Identify the 'Service Type' strictly from this list: [{services_str}]. If not clear, use "Інше".
-        Task 3: Rate the manager's performance (1-10).
-        Task 4: Detect if the manager was rude, incorrect, or gave poor answers. Set 'is_critical_fail' to true if yes.
-        Task 5: Assign points (1 for Yes, 0 for No):
-           - Did the manager greet the client properly?
-           - Did the manager close the conversation properly?
-
-        Output format: STRICT JSON (no markdown formatting).
-        Structure:
-        {{
-            "transcription": "Full text of the conversation...",
-            "service_type": "Exact string from the list",
-            "manager_score": 8,
-            "is_critical_fail": false,
-            "critical_comment": "Description of why it failed (or empty if OK)",
-            "greeting_point": 1,
-            "closing_point": 1
-        }}
-        """
-
-        print("DEBUG: Waiting for Gemini response...")
-        response = self.model.generate_content([prompt, audio_file])
+        print(f"DEBUG: Завантаження {audio_path} у Gemini...")
 
         try:
-            text_response = response.text.strip()
-            if text_response.startswith("```json"):
-                text_response = text_response[7:-3]
-            elif text_response.startswith("```"):
-                text_response = text_response[3:-3]
+            # 1. Завантаження аудіофайлу на сервери Google
+            with open(audio_path, "rb") as f:
+                file_ref = self.client.files.upload(
+                    file=f,
+                    config={'mime_type': 'audio/mp3'}
+                )
 
-            data = json.loads(text_response)
-            return data
+            services_str = ", ".join(Config.SERVICES_LIST)
 
-        except json.JSONDecodeError:
-            print(f"ERROR: Failed to parse JSON from AI response: {response.text}")
-            return {
-                "transcription": response.text,
-                "service_type": "Error",
-                "manager_score": 0,
-                "is_critical_fail": True,
-                "critical_comment": "AI Parse Error",
-                "greeting_point": 0,
-                "closing_point": 0
-            }
+            # 2. Формування системного промпту
+            prompt = f"""
+            Ти — QA в автосервісі. Проаналізуй дзвінок українською.
+
+            1. Транскрибація (дослівна).
+            2. Тип послуги: ТІЛЬКИ ОДИН з [{services_str}].
+            3. KPI (1 - так, 0 - ні):
+               - Привітання?
+               - КУЗОВ?
+               - РІК?
+               - ПРОБІГ?
+               - Запропонував діагностику (Upsell)?
+               - Історія авто?
+               - Прощання?
+            4. Оцінка (1-10).
+            5. Результат (Записався/Думає/Відмова).
+            6. Критичні помилки.
+
+            Output format: Pure JSON object.
+            Keys: transcription, service_type, manager_score, result, is_critical_fail, critical_comment, kpi_greeting, kpi_body, kpi_year, kpi_mileage, kpi_upsell, kpi_history, kpi_closing.
+            """
+
+            # 3. Генерація відповіді з механізмом повторних спроб (Retry)
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=[file_ref, prompt],
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json"
+                        )
+                    )
+
+                    # Очищення та парсинг JSON
+                    clean_text = self._clean_json_string(response.text)
+
+                    # strict=False дозволяє коректно обробляти спецсимволи (наприклад, переноси рядків)
+                    parsed_data = json.loads(clean_text, strict=False)
+
+                    # Обробка випадку, коли AI повертає список замість словника
+                    if isinstance(parsed_data, list):
+                        if len(parsed_data) > 0:
+                            parsed_data = parsed_data[0]
+                        else:
+                            return self._get_error_object("AI повернув порожній список")
+
+                    return parsed_data
+
+                except Exception as e:
+                    # Обробка лімітів API (429 Too Many Requests)
+                    if "429" in str(e) or "quota" in str(e).lower():
+                        wait_time = 40
+                        print(f"⚠️ Вичерпано квоту API. Очікування {wait_time} с...")
+                        time.sleep(wait_time)
+
+                    # Обробка помилок структури JSON (спробуємо ще раз)
+                    elif isinstance(e, json.JSONDecodeError):
+                        print(f"⚠️ Помилка парсингу JSON (спроба {attempt + 1}): {e}")
+                        continue
+                    else:
+                        raise e
+
+            return self._get_error_object("Не вдалося проаналізувати файл після всіх спроб")
+
+        except Exception as e:
+            print(f"❌ Критична помилка AI: {e}")
+            return self._get_error_object(str(e))
+
+    def _get_error_object(self, msg):
+        """Повертає структуру даних за замовчуванням (заглушку) у разі помилки."""
+        return {
+            "transcription": f"Error: {msg}", "service_type": "Error",
+            "manager_score": 0, "is_critical_fail": True, "critical_comment": "System Error",
+            "kpi_greeting": 0, "kpi_body": 0, "kpi_year": 0, "kpi_mileage": 0,
+            "kpi_upsell": 0, "kpi_history": 0, "kpi_closing": 0, "result": "Error"
+        }
