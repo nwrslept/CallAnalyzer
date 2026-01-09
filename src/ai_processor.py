@@ -1,10 +1,9 @@
-import os
 import json
 import time
 from google import genai
 from google.genai import types
 from src.config import Config
-
+from src.logger import logger
 
 class AIProcessor:
     """
@@ -15,6 +14,7 @@ class AIProcessor:
     def __init__(self):
         # Перевірка наявності ключа API у конфігурації
         if not Config.GEMINI_API_KEY:
+            logger.error("❌ Відсутній API ключ Gemini у конфігурації!")
             raise ValueError("Відсутній API ключ Gemini у конфігурації!")
 
         self.client = genai.Client(api_key=Config.GEMINI_API_KEY)
@@ -37,7 +37,7 @@ class AIProcessor:
         Основний метод аналізу дзвінка.
         Завантажує файл, відправляє запит до AI та повертає структуровані дані.
         """
-        print(f"DEBUG: Завантаження {audio_path} у Gemini...")
+        logger.info(f"DEBUG: Завантаження {audio_path} у Gemini...")
 
         try:
             # 1. Завантаження аудіофайлу на сервери Google
@@ -102,12 +102,12 @@ class AIProcessor:
                     # Обробка лімітів API (429 Too Many Requests)
                     if "429" in str(e) or "quota" in str(e).lower():
                         wait_time = 40
-                        print(f"⚠️ Вичерпано квоту API. Очікування {wait_time} с...")
+                        logger.warning(f"⚠️ Вичерпано квоту API. Очікування {wait_time} с...")
                         time.sleep(wait_time)
 
                     # Обробка помилок структури JSON (спробуємо ще раз)
                     elif isinstance(e, json.JSONDecodeError):
-                        print(f"⚠️ Помилка парсингу JSON (спроба {attempt + 1}): {e}")
+                        logger.warning(f"⚠️ Помилка парсингу JSON (спроба {attempt + 1}): {e}")
                         continue
                     else:
                         raise e
@@ -115,7 +115,7 @@ class AIProcessor:
             return self._get_error_object("Не вдалося проаналізувати файл після всіх спроб")
 
         except Exception as e:
-            print(f"❌ Критична помилка AI: {e}")
+            logger.error(f"❌ Критична помилка AI: {e}")
             return self._get_error_object(str(e))
 
     def _get_error_object(self, msg):

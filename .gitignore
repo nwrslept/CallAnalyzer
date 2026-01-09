@@ -15,3 +15,5 @@ temp_audio/
 logs/
 
 .idea/
+bot.log
+bot_db.db
